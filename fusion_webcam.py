@@ -3,8 +3,8 @@ from ultralytics import YOLO
 from pathlib import Path
 
 def main():
-    ai_root = Path(__file__).resolve().parents[1]
-    fire_model_path = ai_root / "models" / "fire_smoke_best.pt"
+    project_root = Path(__file__).resolve().parent
+    fire_model_path = project_root / "models" / "fire_smoke_best.pt"
 
     if not fire_model_path.exists():
         print("❌ Fire model not found:", fire_model_path)
@@ -28,13 +28,16 @@ def main():
         if not ret:
             break
 
-        r1 = coco_model.predict(frame, conf=0.4, verbose=False)[0]
-        r2 = fire_model.predict(frame, conf=0.4, verbose=False)[0]
+        try:
+            r1 = coco_model.predict(frame, conf=0.4, verbose=False)[0]
+            r2 = fire_model.predict(frame, conf=0.4, verbose=False)[0]
 
-        out = r1.plot()
-        out = r2.plot(img=out)
+            out = r1.plot()
+            out = r2.plot(img=out)
 
-        cv2.imshow("Smart Security AI (Fusion)", out)
+            cv2.imshow("Smart Security AI (Fusion)", out)
+        except Exception as e:
+            print(f"⚠️  Prediction error: {e}")
 
         if cv2.waitKey(1) & 0xFF in (ord("q"), ord("Q")):
             break
