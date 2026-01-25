@@ -4,7 +4,7 @@ from pathlib import Path
 
 def main():
     project_root = Path(__file__).resolve().parent.parent
-    fire_model_path = project_root / "models" / "fire_smoke_v2.pt"
+    fire_model_path = project_root / "models" / "fire_smoke_best.pt"
 
     if not fire_model_path.exists():
         print("❌ Fire model not found:", fire_model_path)

@@ -13,7 +13,7 @@ def main():
     STREAM_URL = f"http://{ESP32_IP}:{ESP32_PORT}/stream"
     
     project_root = Path(__file__).resolve().parent.parent
-    fire_model_path = project_root / "models" / "fire_smoke_v2.pt"
+    fire_model_path = project_root / "models" / "fire_smoke_best.pt"
 
     if not fire_model_path.exists():
         print("❌ Fire model not found:", fire_model_path)
