@@ -3,7 +3,7 @@ from ultralytics import YOLO
 from pathlib import Path
 
 def main():
-    project_root = Path(__file__).resolve().parent
+    project_root = Path(__file__).resolve().parent.parent
     fire_model_path = project_root / "models" / "fire_smoke_v2.pt"
 
     if not fire_model_path.exists():
@@ -44,6 +44,7 @@ def main():
 
     cap.release()
     cv2.destroyAllWindows()
+
 
 if __name__ == "__main__":
     main()
