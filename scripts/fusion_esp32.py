@@ -19,17 +19,20 @@ def main():
         return
 
     print("⏳ Loading models...")
-    coco_person_model = YOLO("yolov8n.pt")      # COCO for PERSON only
-    object_model = YOLO(str(obj_path))          # indoor objects
-    fire_model = YOLO(str(fire_path))           # fire + smoke
+    person_model = YOLO("yolov8n.pt")          # COCO model
+    object_model = YOLO(str(obj_path))         # your indoor object model
+    fire_model = YOLO(str(fire_path))          # fire+smoke model
     print("✅ Models loaded")
+
+    obj_class_count = len(object_model.names)
+    object_classes = list(range(1, obj_class_count))  # exclude class 0
 
     cap = cv2.VideoCapture(ESP32_URL)
     if not cap.isOpened():
         print("❌ Cannot open ESP32 stream:", ESP32_URL)
         return
 
-    print("✅ Running ESP32 fusion. Press Q to quit.")
+    print("✅ ESP32 Fusion running. Press Q to quit.")
 
     while True:
         ret, frame = cap.read()
@@ -38,15 +41,15 @@ def main():
 
         start = time.time()
 
-        # 1) Person only from COCO
-        r_person = coco_person_model.predict(frame, conf=0.35, classes=[0], verbose=False)[0]
+        # 1) PERSON only from COCO
+        r_person = person_model.predict(frame, conf=0.35, classes=[0], verbose=False)[0]
         out = r_person.plot()
 
-        # 2) Objects from your indoor model
-        r_obj = object_model.predict(frame, conf=0.35, verbose=False)[0]
+        # 2) Objects EXCEPT person
+        r_obj = object_model.predict(frame, conf=0.35, classes=object_classes, verbose=False)[0]
         out = r_obj.plot(img=out)
 
-        # 3) Fire/Smoke from your custom model
+        # 3) Fire/Smoke
         r_fire = fire_model.predict(frame, conf=0.45, verbose=False)[0]
         out = r_fire.plot(img=out)
 

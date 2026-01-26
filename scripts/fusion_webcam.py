@@ -17,17 +17,26 @@ def main():
         return
 
     print("⏳ Loading models...")
-    coco_person_model = YOLO("yolov8n.pt")          # COCO for PERSON only
-    object_model = YOLO(str(obj_path))              # indoor objects
-    fire_model = YOLO(str(fire_path))               # fire + smoke
+    person_model = YOLO("yolov8n.pt")          # COCO model
+    object_model = YOLO(str(obj_path))         # your indoor object model
+    fire_model = YOLO(str(fire_path))          # fire+smoke model
     print("✅ Models loaded")
+
+    # Object model class count
+    obj_class_count = len(object_model.names)
+    print(f"📌 Object model classes: {obj_class_count}")
+    print("📌 Object model names:", object_model.names)
+
+    # Exclude class 0 (person) from object model output
+    # Keep all other classes: 1..N-1
+    object_classes = list(range(1, obj_class_count))
 
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
         print("❌ Webcam not found")
         return
 
-    print("✅ Running fusion (Person=COCO, Objects=Home, Fire=Fire). Press Q to quit.")
+    print("✅ Fusion running (Person=COCO only). Press Q to quit.")
 
     while True:
         ret, frame = cap.read()
@@ -36,15 +45,15 @@ def main():
 
         start = time.time()
 
-        # 1) Person detection only from COCO
-        r_person = coco_person_model.predict(frame, conf=0.35, classes=[0], verbose=False)[0]
+        # 1) PERSON only from COCO (COCO class 0 = person)
+        r_person = person_model.predict(frame, conf=0.35, classes=[0], verbose=False)[0]
         out = r_person.plot()
 
-        # 2) Indoor object detection model
-        r_obj = object_model.predict(frame, conf=0.35, verbose=False)[0]
+        # 2) Objects from your model EXCEPT person (exclude class 0)
+        r_obj = object_model.predict(frame, conf=0.35, classes=object_classes, verbose=False)[0]
         out = r_obj.plot(img=out)
 
-        # 3) Fire + Smoke model
+        # 3) Fire/Smoke
         r_fire = fire_model.predict(frame, conf=0.45, verbose=False)[0]
         out = r_fire.plot(img=out)
 
