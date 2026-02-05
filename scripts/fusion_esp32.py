@@ -1,5 +1,6 @@
 import cv2
 import time
+import os
 import torch
 from ultralytics import YOLO
 from threading import Thread, Lock
@@ -19,17 +20,7 @@ FONT = cv2.FONT_HERSHEY_SIMPLEX
 FONT_SCALE = 0.6
 TEXT_THICKNESS = 2
 
-# =========================
-# CAMERA THREAD (LATEST FRAME ONLY)
-# =========================
-class Camera:
-    def __init__(self, url):
-        self.cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
-        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        self.frame = None
-        self.lock = Lock()
-        self.running = True
-        Thread(target=self._reader, daemon=True).start()
+os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "timeout;60000"
 
     def _reader(self):
         while self.running:
@@ -54,7 +45,22 @@ def main():
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA not available")
 
-    print("GPU:", torch.cuda.get_device_name(0))
+    # =====================================
+    # CHECK GPU
+    # =====================================
+    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"🔥 Using device: {DEVICE}")
+
+    print("⏳ Loading models...")
+
+    coco_model = YOLO("yolov8n.pt")
+    fire_model = YOLO(str(fire_model_path))
+
+    # ---- MOVE TO GPU ----
+    coco_model.to(DEVICE)
+    fire_model.to(DEVICE)
+
+    print("✅ Models loaded on", DEVICE)
 
     import os
     model_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "yolov8n.pt")
@@ -98,6 +104,38 @@ def main():
         # DRAW (NATURAL LOOK)
         # =========================
         output = frame.copy()
+
+        # Resize for YOLO
+        yolo_frame = cv2.resize(frame, (YOLO_SIZE, YOLO_SIZE))
+
+        # =========================
+        # GPU INFERENCE
+        # =========================
+        r_coco = coco_model.predict(
+            yolo_frame,
+            conf=COCO_CONF,
+            verbose=False,
+            device=DEVICE
+        )[0]
+
+        r_fire = fire_model.predict(
+            yolo_frame,
+            conf=FIRE_CONF,
+            verbose=False,
+            device=DEVICE
+        )[0]
+
+        now = time.time()
+
+        if r_coco.boxes is not None and len(r_coco.boxes) > 0:
+            last_coco_seen = now
+
+        if r_fire.boxes is not None and len(r_fire.boxes) > 0:
+            last_fire_seen = now
+
+        coco_present = (now - last_coco_seen) < PERSIST_TIME
+        fire_present = (now - last_fire_seen) < PERSIST_TIME
+
         sx = w / YOLO_SIZE
         sy = h / YOLO_SIZE
 
@@ -145,10 +183,7 @@ def main():
             cv2.LINE_AA
         )
 
-        # =========================
-        # DISPLAY (RAW, NO SCALING)
-        # =========================
-        cv2.imshow("ESP32 – CLEAN YOLO OUTPUT", output)
+        cv2.imshow("ESP32 – Fire + COCO Detection [GPU]", output)
 
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
