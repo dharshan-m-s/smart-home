@@ -192,6 +192,7 @@ def main():
             break
 
     cam.stop()
+
     cv2.destroyAllWindows()
 
 
