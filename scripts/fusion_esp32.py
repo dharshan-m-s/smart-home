@@ -11,14 +11,11 @@ from threading import Thread, Lock
 # CONFIG
 # =========================
 ESP32_STREAM_URL = "http://192.168.4.1:81/stream"
-SERIAL_PORT = "COM4"      # CHANGE
+SERIAL_PORT = "COM3"
 SERIAL_BAUD = 9600
 
-YOLO_SIZE = 320
-DETECT_EVERY_N_FRAMES = 3
-COCO_CONF = 0.35
-
-os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "timeout;60000"
+MODEL_PATH = "yolov8m.pt"   # Change to yolov8n.pt if FPS is low
+CONF_THRES = 0.4
 
 # =========================
 # GLOBAL SENSOR STATE
@@ -45,42 +42,12 @@ def serial_reader():
             if not line:
                 continue
 
-            # Example: PIR=1,GAS=420,...
             for item in line.split(","):
                 if item.startswith("PIR="):
                     with sensor_lock:
                         pir_state = int(item.split("=")[1])
-
-        except Exception:
+        except:
             pass
-
-
-# =========================
-# CAMERA THREAD
-# =========================
-class Camera:
-    def __init__(self, url):
-        self.cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
-        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        self.frame = None
-        self.lock = Lock()
-        self.running = True
-        Thread(target=self._reader, daemon=True).start()
-
-    def _reader(self):
-        while self.running:
-            ret, frame = self.cap.read()
-            if ret:
-                with self.lock:
-                    self.frame = frame
-
-    def read(self):
-        with self.lock:
-            return None if self.frame is None else self.frame.copy()
-
-    def stop(self):
-        self.running = False
-        self.cap.release()
 
 
 # =========================
@@ -88,98 +55,98 @@ class Camera:
 # =========================
 def main():
 
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA not available")
+    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"Using device: {DEVICE}")
 
-    DEVICE = "cuda"
-
-    # ---- Start serial thread ----
     Thread(target=serial_reader, daemon=True).start()
 
-    # ---- Load model ----
-    model = YOLO("yolov8n.pt")
+    model = YOLO(MODEL_PATH)
     model.to(DEVICE)
-    CLASS_NAMES = model.names
 
-    cam = Camera(ESP32_STREAM_URL)
-    time.sleep(2)
+    cap = cv2.VideoCapture(ESP32_STREAM_URL)
+    if not cap.isOpened():
+        print("❌ Failed to open camera stream")
+        return
 
-    frame_count = 0
-    last_boxes = None
+    person_detected = False
 
     while True:
         start = time.time()
 
-        frame = cam.read()
-        if frame is None:
+        ret, frame = cap.read()
+        if not ret:
             continue
 
-        h, w = frame.shape[:2]
-        frame_count += 1
-
-        # =========================
-        # YOLO
-        # =========================
-        if frame_count % DETECT_EVERY_N_FRAMES == 0:
-            yolo_frame = cv2.resize(frame, (YOLO_SIZE, YOLO_SIZE))
-            results = model.predict(
-                yolo_frame,
-                imgsz=YOLO_SIZE,
-                conf=COCO_CONF,
-                device=DEVICE,
-                classes=[0],      # PERSON ONLY
-                verbose=False
-            )[0]
-            last_boxes = results.boxes
+        # 🔥 TRACK instead of predict
+        results = model.track(
+            frame,
+            conf=CONF_THRES,
+            device=DEVICE,
+            persist=True,
+            verbose=False
+        )[0]
 
         output = frame.copy()
-        sx = w / YOLO_SIZE
-        sy = h / YOLO_SIZE
-
         person_detected = False
 
-        if last_boxes is not None and len(last_boxes) > 0:
-            person_detected = True
-            for box in last_boxes:
-                x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+        if results.boxes is not None:
+            for box in results.boxes:
+
+                cls = int(box.cls[0])
                 conf = float(box.conf[0])
+                track_id = int(box.id[0]) if box.id is not None else -1
 
-                x1, x2 = int(x1*sx), int(x2*sx)
-                y1, y2 = int(y1*sy), int(y2*sy)
+                label = model.names[cls]
+                x1, y1, x2, y2 = map(int, box.xyxy[0])
 
-                cv2.rectangle(output, (x1,y1), (x2,y2), (255,0,0), 2)
-                cv2.putText(output, f"Person {conf:.2f}",
-                            (x1,y1-6),
+                if label == "person":
+                    person_detected = True
+                    color = (0, 0, 255)
+                else:
+                    random.seed(track_id)
+                    color = (
+                        random.randint(0,255),
+                        random.randint(0,255),
+                        random.randint(0,255)
+                    )
+
+                cv2.rectangle(output, (x1,y1), (x2,y2), color, 2)
+                cv2.putText(output,
+                            f"{label} ID:{track_id} {conf:.2f}",
+                            (x1,y1-8),
                             cv2.FONT_HERSHEY_SIMPLEX,
-                            0.6,(255,0,0),2)
+                            0.6,
+                            color, 2)
 
         # =========================
-        # FUSION
+        # SENSOR FUSION
         # =========================
         with sensor_lock:
             pir = pir_state
 
         if person_detected and pir == 1:
-            cv2.putText(output, "🚨 INTRUSION DETECTED",
-                        (50,100),
+            cv2.putText(output,
+                        "🚨 INTRUSION DETECTED",
+                        (40,80),
                         cv2.FONT_HERSHEY_SIMPLEX,
-                        1.2,(0,0,255),3)
+                        1.2,
+                        (0,0,255),3)
 
-        # =========================
         # FPS
-        # =========================
         fps = 1.0 / (time.time() - start + 1e-6)
-        cv2.putText(output, f"FPS: {fps:.1f}",
+        cv2.putText(output,
+                    f"FPS: {fps:.1f}",
                     (20,40),
                     cv2.FONT_HERSHEY_SIMPLEX,
-                    1,(0,255,0),2)
+                    1,
+                    (0,255,0),2)
 
-        cv2.imshow("Fusion: Camera + PIR", output)
+        cv2.imshow("Fusion System", output)
 
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
 
-    cam.stop()
+    cap.release()
     cv2.destroyAllWindows()
 
 
